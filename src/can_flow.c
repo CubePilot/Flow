@@ -66,10 +66,15 @@ RUN_AFTER(INIT_END) {
 }
 
 static void flow_task_func(struct worker_thread_timer_task_s* task) {
-    if (pmw3901mb_read(&pmw3901mb, 0x15) & 0x20) {
-        imu_integrator_trigger = true;
+    if (publish_flow) {
+        if (pmw3901mb_read(&pmw3901mb, 0x15) & 0x20) {
+            pmw3901mb_write(&pmw3901mb, 0x15, 0);
+            imu_integrator_trigger = true;
+        }
     }
 }
+
+static void apply_rotation(float* v) {}
 
 static void imu_deltas_handler(size_t msg_size, const void* buf, void* ctx) {
     const struct imu_delta_s* deltas = (const struct imu_delta_s*)buf;
@@ -77,7 +82,6 @@ static void imu_deltas_handler(size_t msg_size, const void* buf, void* ctx) {
     if (publish_flow) {
         struct pmw3901mb_motion_report_s motion_report;
         pmw3901mb_burst_read(&pmw3901mb, &motion_report);
-        pmw3901mb_write(&pmw3901mb, 0x15, 0);
 
         static struct com_hex_equipment_flow_Measurement_s msg;
 
@@ -102,21 +106,26 @@ static void imu_deltas_handler(size_t msg_size, const void* buf, void* ctx) {
 
         msg.integration_interval = deltas->dt;
 
-        msg.rate_gyro_latest[0] = deltas->delta_ang[1]/deltas->dt;
-        msg.rate_gyro_latest[1] = deltas->delta_ang[0]/deltas->dt;
+        msg.rate_gyro_latest[0] = deltas->delta_ang[0]/deltas->dt;
+        msg.rate_gyro_latest[1] = deltas->delta_ang[1]/deltas->dt;
         msg.rate_gyro_latest[2] = deltas->delta_ang[2]/deltas->dt;
 
-        msg.accelerometer_latest[0] = deltas->delta_vel[1]/deltas->dt;
-        msg.accelerometer_latest[1] = deltas->delta_vel[0]/deltas->dt;
+        apply_rotation(msg.rate_gyro_latest);
+
+        msg.accelerometer_latest[0] = deltas->delta_vel[0]/deltas->dt;
+        msg.accelerometer_latest[1] = deltas->delta_vel[1]/deltas->dt;
         msg.accelerometer_latest[2] = deltas->delta_vel[2]/deltas->dt;
+        apply_rotation(msg.accelerometer_latest);
 
-        msg.rate_gyro_integral[0] = deltas->delta_ang[1];
-        msg.rate_gyro_integral[1] = deltas->delta_ang[0];
+        msg.rate_gyro_integral[0] = deltas->delta_ang[0];
+        msg.rate_gyro_integral[1] = deltas->delta_ang[1];
         msg.rate_gyro_integral[2] = deltas->delta_ang[2];
+        apply_rotation(msg.rate_gyro_integral);
 
-        msg.accelerometer_integral[0] = deltas->delta_vel[1];
-        msg.accelerometer_integral[1] = deltas->delta_vel[0];
+        msg.accelerometer_integral[0] = deltas->delta_vel[0];
+        msg.accelerometer_integral[1] = deltas->delta_vel[1];
         msg.accelerometer_integral[2] = deltas->delta_vel[2];
+        apply_rotation(msg.accelerometer_integral);
 
         uavcan_broadcast(0, &uavcan_equipment_ahrs_RawIMU_descriptor, CANARD_TRANSFER_PRIORITY_HIGH, &msg);
     }

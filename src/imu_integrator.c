@@ -88,13 +88,14 @@ static void raw_imu_handler(size_t msg_size, const void* buf, void* ctx) {
 
     const float publish_interval = 1.0/update_rate;
 
-    if (imu_integrator_trigger) {
+    if (imu_integrator_trigger || dt_sum >= publish_interval) {
         pubsub_publish_message(&imu_deltas_topic, sizeof(struct imu_delta_s), delta_publisher_func, NULL);
 
         const systime_t tnow = chVTGetSystemTimeX();
-        const float dt_meas = (tnow-last_publish)/(float)CH_CFG_ST_FREQUENCY/(float)raw_meas_count;
+        const float pub_dt_meas = (tnow-last_publish)/(float)CH_CFG_ST_FREQUENCY;
+        const float dt_meas = pub_dt_meas/(float)raw_meas_count;
 
-        const float alpha = publish_interval/(publish_interval+10.0);
+        const float alpha = pub_dt_meas/(pub_dt_meas+10.0);
         dt += (dt_meas-dt)*alpha;
         dt_sum = 0;
         raw_meas_count = 0;
