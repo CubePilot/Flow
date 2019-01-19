@@ -7,3 +7,5 @@ struct imu_delta_s {
 };
 
 extern struct pubsub_topic_s imu_deltas_topic;
+
+void imu_integrator_trigger(void);

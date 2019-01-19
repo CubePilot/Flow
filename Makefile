@@ -40,7 +40,8 @@ MESSAGES_ENABLED = \
 uavcan.protocol.debug.LogMessage \
 com.hex.equipment.flow.Measurement \
 uavcan.equipment.range_sensor.Measurement \
-uavcan.equipment.ahrs.RawIMU
+uavcan.equipment.ahrs.RawIMU \
+uavcan.protocol.file.Read
 
 VENDOR_DSDL_NAMESPACE_DIRS = ./dsdl/com
 
