@@ -55,7 +55,7 @@ static void imu_deltas_handler(size_t msg_size, const void* buf, void* ctx) {
 
         msg.quality = motion_report.squal;
 
-        if (motion_report.shutter_upper == 0x1f || motion_report.squal < 0x19) {
+        if (motion_report.shutter_upper == 0x1f && motion_report.squal < 0x19) {
             msg.quality = 0;
         }
 
