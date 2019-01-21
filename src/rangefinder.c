@@ -41,43 +41,45 @@ RUN_AFTER(INIT_END) {
 }
 
 static void range_task_func(struct worker_thread_timer_task_s* task) {
-    // get VL53L1 range measurement
-    VL53L1_Error status;
-    uint8_t measurement_available = 0;
-    status = VL53L1_GetMeasurementDataReady(&vl53l1x, &measurement_available);
-    if (measurement_available) {
-        VL53L1_RangingMeasurementData_t meas_data;
-        status = VL53L1_GetRangingMeasurementData(&vl53l1x, &meas_data);
+    if (publish_rangefinder) {
+        // get VL53L1 range measurement
+        VL53L1_Error status;
+        uint8_t measurement_available = 0;
+        status = VL53L1_GetMeasurementDataReady(&vl53l1x, &measurement_available);
+        if (measurement_available) {
+            VL53L1_RangingMeasurementData_t meas_data;
+            status = VL53L1_GetRangingMeasurementData(&vl53l1x, &meas_data);
 
-        if (status == VL53L1_ERROR_NONE) {
-            static struct uavcan_equipment_range_sensor_Measurement_s msg;
-            memset(&msg, 0, sizeof(msg));
+            if (status == VL53L1_ERROR_NONE) {
+                static struct uavcan_equipment_range_sensor_Measurement_s msg;
+                memset(&msg, 0, sizeof(msg));
 
-            msg.sensor_id = 0;
-            msg.beam_orientation_in_body_frame.orientation_defined = false;
+                msg.sensor_id = 0;
+                msg.beam_orientation_in_body_frame.orientation_defined = false;
 
-            msg.field_of_view = 0.4;
+                msg.field_of_view = 0.4;
 
-            if (meas_data.RangeStatus == 0 || meas_data.RangeStatus == 7) {
-                msg.range = meas_data.RangeMilliMeter*1e-3;
-                msg.reading_type = UAVCAN_EQUIPMENT_RANGE_SENSOR_MEASUREMENT_READING_TYPE_VALID_RANGE;
-            } else {
-                msg.reading_type = UAVCAN_EQUIPMENT_RANGE_SENSOR_MEASUREMENT_READING_TYPE_UNDEFINED;
+                if (meas_data.RangeStatus == 0 || meas_data.RangeStatus == 7) {
+                    msg.range = meas_data.RangeMilliMeter*1e-3;
+                    msg.reading_type = UAVCAN_EQUIPMENT_RANGE_SENSOR_MEASUREMENT_READING_TYPE_VALID_RANGE;
+                } else {
+                    msg.reading_type = UAVCAN_EQUIPMENT_RANGE_SENSOR_MEASUREMENT_READING_TYPE_UNDEFINED;
 
-                // Try the other distance mode
-                switch(distance_mode) {
-                    case VL53L1_DISTANCEMODE_SHORT:
-                        distance_mode = VL53L1_DISTANCEMODE_LONG;
-                        break;
-                    case VL53L1_DISTANCEMODE_LONG:
-                        distance_mode = VL53L1_DISTANCEMODE_SHORT;
-                        break;
+                    // Try the other distance mode
+                    switch(distance_mode) {
+                        case VL53L1_DISTANCEMODE_SHORT:
+                            distance_mode = VL53L1_DISTANCEMODE_LONG;
+                            break;
+                        case VL53L1_DISTANCEMODE_LONG:
+                            distance_mode = VL53L1_DISTANCEMODE_SHORT;
+                            break;
+                    }
+                    status = VL53L1_SetDistanceMode(&vl53l1x, distance_mode);
                 }
-                status = VL53L1_SetDistanceMode(&vl53l1x, distance_mode);
+                uavcan_broadcast(0, &uavcan_equipment_range_sensor_Measurement_descriptor, CANARD_TRANSFER_PRIORITY_MEDIUM+1, &msg);
             }
-            uavcan_broadcast(0, &uavcan_equipment_range_sensor_Measurement_descriptor, CANARD_TRANSFER_PRIORITY_MEDIUM+1, &msg);
-        }
 
-        status = VL53L1_ClearInterruptAndStartMeasurement(&vl53l1x);
+            status = VL53L1_ClearInterruptAndStartMeasurement(&vl53l1x);
+        }
     }
 }
