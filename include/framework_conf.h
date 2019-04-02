@@ -14,6 +14,7 @@
 #define UAVCAN_ALLOCATEE_WORKER_THREAD                  lpwork_thread
 #define PIN_CHANGE_PUBLISHER_WORKER_THREAD              lpwork_thread
 #define STACK_MEASUREMENT_WORKER_THREAD                 lpwork_thread
+#define LOAD_MEASUREMENT_WORKER_THREAD                  lpwork_thread
 #define IMU_INTEGRATOR_WORKER_THREAD                    lpwork_thread
 
 #define IMU_READER_WORKER_THREAD                        spi3_thread

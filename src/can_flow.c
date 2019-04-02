@@ -10,42 +10,45 @@
 #include <uavcan.equipment.ahrs.RawIMU.h>
 #include <uavcan.protocol.file.Read.h>
 
-#include <imu_integrator.h>
+#include <gyro_integrator.h>
+#include <string.h>
 
 WORKER_THREAD_DECLARE_EXTERN(spi3_thread)
 
 static struct pmw3901mb_instance_s pmw3901mb;
 
-static struct worker_thread_listener_task_s imu_delta_listener_task;
-static void imu_deltas_handler(size_t msg_size, const void* buf, void* ctx);
+static struct worker_thread_listener_task_s gyro_delta_listener_task;
+static void gyro_deltas_handler(size_t msg_size, const void* buf, void* ctx);
 
 static struct worker_thread_timer_task_s flow_task;
 static void flow_task_func(struct worker_thread_timer_task_s* task);
 
+static systime_t last_publish;
+
 PARAM_DEFINE_BOOL_PARAM_STATIC(publish_flow, "PUBLISH_FLOW", true)
-PARAM_DEFINE_BOOL_PARAM_STATIC(publish_raw_imu, "PUBLISH_RAW_IMU", false)
 
 RUN_AFTER(INIT_END) {
     // initialize PMW3901MB optical flow
     pmw3901mb_init(&pmw3901mb, FLOW_SPI_BUS, BOARD_PAL_LINE_SPI_CS_FLOW, PMW3901MB_TYPE_V1);
 
-    worker_thread_add_listener_task(&spi3_thread, &imu_delta_listener_task, &imu_deltas_topic, imu_deltas_handler, NULL);
-    worker_thread_add_timer_task(&spi3_thread, &flow_task, flow_task_func, NULL, LL_US2ST(200), true);
+    worker_thread_add_listener_task(&spi3_thread, &gyro_delta_listener_task, &gyro_deltas_topic, gyro_deltas_handler, NULL);
+    worker_thread_add_timer_task(&spi3_thread, &flow_task, flow_task_func, NULL, LL_US2ST(500), true);
 }
 
 static void flow_task_func(struct worker_thread_timer_task_s* task) {
+    (void)task;
     if (publish_flow) {
         if (pmw3901mb_read(&pmw3901mb, 0x15) & 0x20) {
             pmw3901mb_write(&pmw3901mb, 0x15, 0);
-            imu_integrator_trigger();
+            gyro_integrator_trigger();
         }
     }
 }
 
-static void apply_rotation(float* v) {}
-
-static void imu_deltas_handler(size_t msg_size, const void* buf, void* ctx) {
-    const struct imu_delta_s* deltas = (const struct imu_delta_s*)buf;
+static void gyro_deltas_handler(size_t msg_size, const void* buf, void* ctx) {
+    (void)msg_size;
+    (void)ctx;
+    const struct gyro_delta_s* deltas = (const struct gyro_delta_s*)buf;
 
     if (publish_flow) {
         struct pmw3901mb_motion_report_s motion_report;
@@ -60,42 +63,12 @@ static void imu_deltas_handler(size_t msg_size, const void* buf, void* ctx) {
         }
 
         msg.integration_interval = deltas->dt;
-        msg.rate_gyro_integral[0] = -deltas->delta_ang[1];
-        msg.rate_gyro_integral[1] = deltas->delta_ang[0];
-        msg.flow_integral[0] = motion_report.delta_x*2.1e-3;
-        msg.flow_integral[1] = motion_report.delta_y*2.1e-3;
+        msg.rate_gyro_integral[0] = -deltas->delta_gyro[1];
+        msg.rate_gyro_integral[1] = deltas->delta_gyro[0];
+        msg.flow_integral[0] = motion_report.delta_x*2.27e-3;
+        msg.flow_integral[1] = motion_report.delta_y*2.27e-3;
 
         uavcan_broadcast(0, &com_hex_equipment_flow_Measurement_descriptor, CANARD_TRANSFER_PRIORITY_MEDIUM, &msg);
-    }
-
-    if (publish_raw_imu) {
-        struct uavcan_equipment_ahrs_RawIMU_s msg;
-        memset(&msg, 0, sizeof(msg));
-
-        msg.integration_interval = deltas->dt;
-
-        msg.rate_gyro_latest[0] = deltas->delta_ang[0]/deltas->dt;
-        msg.rate_gyro_latest[1] = deltas->delta_ang[1]/deltas->dt;
-        msg.rate_gyro_latest[2] = deltas->delta_ang[2]/deltas->dt;
-
-        apply_rotation(msg.rate_gyro_latest);
-
-        msg.accelerometer_latest[0] = deltas->delta_vel[0]/deltas->dt;
-        msg.accelerometer_latest[1] = deltas->delta_vel[1]/deltas->dt;
-        msg.accelerometer_latest[2] = deltas->delta_vel[2]/deltas->dt;
-        apply_rotation(msg.accelerometer_latest);
-
-        msg.rate_gyro_integral[0] = deltas->delta_ang[0];
-        msg.rate_gyro_integral[1] = deltas->delta_ang[1];
-        msg.rate_gyro_integral[2] = deltas->delta_ang[2];
-        apply_rotation(msg.rate_gyro_integral);
-
-        msg.accelerometer_integral[0] = deltas->delta_vel[0];
-        msg.accelerometer_integral[1] = deltas->delta_vel[1];
-        msg.accelerometer_integral[2] = deltas->delta_vel[2];
-        apply_rotation(msg.accelerometer_integral);
-
-        uavcan_broadcast(0, &uavcan_equipment_ahrs_RawIMU_descriptor, CANARD_TRANSFER_PRIORITY_HIGH, &msg);
     }
 }
 
@@ -110,6 +83,8 @@ RUN_AFTER(UAVCAN_INIT) {
 }
 
 static void read_req_handler(size_t msg_size, const void* buf, void* ctx) {
+    (void)msg_size;
+    (void)ctx;
     const struct uavcan_deserialized_message_s* msg_wrapper = buf;
     const struct uavcan_protocol_file_Read_req_s* req = (const struct uavcan_protocol_file_Read_req_s*)msg_wrapper->msg;
 

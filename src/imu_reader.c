@@ -20,7 +20,7 @@ static struct invensense_instance_s invensense;
 static struct worker_thread_timer_task_s invensense_read_task;
 static void invensense_read_task_func(struct worker_thread_timer_task_s* task);
 
-PUBSUB_TOPIC_GROUP_CREATE(invensense_raw_sample_topic_group, 2048);
+PUBSUB_TOPIC_GROUP_CREATE(invensense_raw_sample_topic_group, 1024);
 struct pubsub_topic_s invensense_raw_sample_topic;
 
 RUN_ON(PUBSUB_TOPIC_INIT) {
