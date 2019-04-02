@@ -63,8 +63,8 @@ static void gyro_deltas_handler(size_t msg_size, const void* buf, void* ctx) {
         }
 
         msg.integration_interval = deltas->dt;
-        msg.rate_gyro_integral[0] = -deltas->delta_gyro[1];
-        msg.rate_gyro_integral[1] = deltas->delta_gyro[0];
+        msg.rate_gyro_integral[0] = deltas->delta_gyro[0];
+        msg.rate_gyro_integral[1] = deltas->delta_gyro[1];
         msg.flow_integral[0] = motion_report.delta_x*2.27e-3;
         msg.flow_integral[1] = motion_report.delta_y*2.27e-3;
 

@@ -63,6 +63,9 @@ static void delta_publisher_func(size_t msg_size, void* buf, void* ctx) {
     delta->delta_vel[0] = x[x_idx][4];
     delta->delta_vel[1] = x[x_idx][5];
     delta->delta_vel[2] = x[x_idx][6];
+
+    board_apply_imu_rotation(delta->delta_ang);
+    board_apply_imu_rotation(delta->delta_vel);
     
     memset(x,0,sizeof(x));
     x[x_idx][0] = 1;

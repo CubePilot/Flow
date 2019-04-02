@@ -25,3 +25,5 @@
 #define VL53L1X_I2C_BUS 2
 #define ICM_SPI_BUS 3
 #define FLOW_SPI_BUS 3
+
+void board_apply_imu_rotation(float* v);

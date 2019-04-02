@@ -30,3 +30,13 @@ void boardInit(void) {
     palSetLineMode(BOARD_PAL_LINE_CAN_RX, PAL_MODE_ALTERNATE(9) | PAL_STM32_OSPEED_HIGHEST);
     palSetLineMode(BOARD_PAL_LINE_CAN_TX, PAL_MODE_ALTERNATE(9) | PAL_STM32_OSPEED_HIGHEST);
 }
+
+void board_apply_imu_rotation(float* v) {
+    float v_rot[3];
+
+    v_rot[0] = -v[1];
+    v_rot[1] = v[0];
+    v_rot[2] = v[2];
+
+    memcpy(v, v_rot, sizeof(v_rot));
+}
