@@ -28,8 +28,9 @@ static systime_t last_publish;
 PARAM_DEFINE_BOOL_PARAM_STATIC(publish_flow, "PUBLISH_FLOW", true)
 
 RUN_AFTER(INIT_END) {
-    // initialize PMW3901MB optical flow
-    pmw3901mb_init(&pmw3901mb, FLOW_SPI_BUS, BOARD_PAL_LINE_SPI_CS_FLOW, PMW3901MB_TYPE_V1);
+    if (!pmw3901mb_init(&pmw3901mb, FLOW_SPI_BUS, BOARD_PAL_LINE_SPI_CS_FLOW)) {
+        return;
+    }
 
     worker_thread_add_listener_task(&spi3_thread, &gyro_delta_listener_task, &gyro_deltas_topic, gyro_deltas_handler, NULL);
     worker_thread_add_timer_task(&spi3_thread, &flow_task, flow_task_func, NULL, LL_US2ST(500), true);
