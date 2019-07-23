@@ -1,4 +1,5 @@
 #include <hal.h>
+#include <string.h>
 
 void boardInit(void) {
     // SPI3
