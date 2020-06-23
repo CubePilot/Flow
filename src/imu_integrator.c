@@ -40,7 +40,7 @@ RUN_ON(INIT_END) {
     worker_thread_add_listener_task(&WT, &raw_imu_listener_task, &invensense_raw_sample_topic, raw_imu_handler, NULL);
 }
 
-static void delta_publisher_func(size_t msg_size, void* buf, void* ctx) {
+static void __attribute__((optimize("O3"))) delta_publisher_func(size_t msg_size, void* buf, void* ctx) {
     (void)msg_size;
     (void)ctx;
     
@@ -71,7 +71,7 @@ static void delta_publisher_func(size_t msg_size, void* buf, void* ctx) {
     x[x_idx][0] = 1;
 }
 
-static void raw_imu_handler(size_t msg_size, const void* buf, void* ctx) {
+static void __attribute__((optimize("O3"))) raw_imu_handler(size_t msg_size, const void* buf, void* ctx) {
     (void)msg_size;
     (void)ctx;
     
@@ -109,7 +109,7 @@ static void raw_imu_handler(size_t msg_size, const void* buf, void* ctx) {
     }
 }
 
-static void integrate(float* x, float* omega, float* accel, float dt, float* x_ret) {
+static void __attribute__((optimize("O3"))) integrate(float* x, float* omega, float* accel, float dt, float* x_ret) {
     float X0 = (1.0f/2.0f)*omega[0];
     float X1 = (1.0f/2.0f)*omega[1];
     float X2 = (1.0f/2.0f)*omega[2];
