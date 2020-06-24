@@ -1,0 +1,670 @@
+// Reference codes for PAW390X
+// the library codes are reference to Arduino Uno boards
+
+// Change log
+// ver 3.1 --> First release, match datasheet ver 1.0
+
+#define PIN_NCS           10  // output pin at Arduino UNO that control the NCS pin
+
+// Various time delay needed for PAW390X
+#define TIME_us_TSWW         11    //  - actually 10.5us, but Arduino delay function only accept round number
+#define TIME_us_TSWR          6
+#define TIME_us_TSRW_TSRR     2
+#define TIME_us_TSRAD         2
+#define TIME_us_TSCLK_NCS_W   2
+#define TIME_us_TBEXIT        1    // should be 500ns, but smallest delay Arduino can do is 1us
+#define TIME_us_TNCS_SCLK     1    // should be 120ns
+#define TIME_us_TSCLK_NCS_R   1    // should be 120ns
+
+// Bit Define
+#define BIT0 (1 << 0)
+#define BIT1 (1 << 1)
+#define BIT2 (1 << 2)
+#define BIT3 (1 << 3)
+#define BIT4 (1 << 4)
+#define BIT5 (1 << 5)
+#define BIT6 (1 << 6)
+#define BIT7 (1 << 7)
+// Helper macro
+#define BIT_CLEAR(REG,MASK)        (REG &= ~MASK)
+#define BIT_SET(REG,MASK)          (REG |=  MASK)
+#define IS_BIT_CLEAR(REG,MASK)    ((REG & MASK)==0x00)
+#define IS_BIT_SET(REG,MASK)      ((REG & MASK)==MASK)
+
+// Motion read size
+#define MOTION_BURST_SIZE   12
+#define MOTION_REPORT_SIZE (MOTION_BURST_SIZE)
+// Union for 16-bit value
+union n16Bit
+{
+  unsigned char c[2];    // c[0] = LO byte, c[1] = HI byte
+  unsigned short i;
+  signed short si;
+};
+// Structure for motion data
+union 
+{
+  unsigned char d[MOTION_REPORT_SIZE];    // set to maximum bytes which is burst read
+  struct   // Burst reading from register 0x50
+  {
+    unsigned char motion;        // BYTE 0
+    unsigned char observation;   // BYTE 1
+    union n16Bit deltaX;         // BYTE 2 & 3
+    union n16Bit deltaY;         // BYTE 4 & 5
+    unsigned char squal;         // BYTE 6
+    unsigned char rd_sum;        // BYTE 7
+    unsigned char rd_max;        // BYTE 8
+    unsigned char rd_min;        // BYTE 9
+    union n16Bit shutter;        // BYTE 10 & 11  // this need to be reversed after reading in byte form, as the first read byte is upper
+  } burst;
+} MotionData;
+
+bool bEnableJitterSuppression = true;    // Enable jitter suppression
+enum OperationModes
+{
+  BRIGHT,
+  LOW_LIGHT,
+  SUPER_LOW_LIGHT,
+};
+unsigned char OpMode;
+unsigned char OpMode_hysteresis1;
+unsigned char OpMode_hysteresis2;
+unsigned char OpMode_skipmotion_cnt;
+
+// Thresholds set for Operation mode changes
+struct THR_OPMODE_STEP_DOWN
+{
+  unsigned char rd_sum;
+  unsigned short shutter;
+  unsigned char hysteresis;
+};
+struct THR_OPMODE_STEP_UP
+{
+  unsigned short shutter;
+  unsigned char hysteresis;
+};
+
+union {
+  unsigned char d[20];            // the size here is not critical as long as the struct size is correct, only wasted if array size is bigger
+  struct   // Individual threshold access
+  {
+    struct THR_OPMODE_STEP_DOWN opmode_stepdown[2];
+    struct THR_OPMODE_STEP_UP opmode_stepup[2];
+  } thrs;
+  struct   // Individual threshold access
+  {
+    struct THR_OPMODE_STEP_DOWN Bright_to_LowLight;
+    struct THR_OPMODE_STEP_DOWN LowLight_to_SuperLowLight;
+    struct THR_OPMODE_STEP_UP LowLight_to_Bright;
+    struct THR_OPMODE_STEP_UP SuperLowLight_to_LowLight;
+  } thr;
+} THRESH_OPMODE;
+unsigned short Thresh_OpModeSwitchHys = 10;
+
+void Power_ON_Reset()
+{
+   // Power up sequence
+   // Drive NCS low
+   digitalWrite(PIN_NCS,LOW);
+   // Drive NCS high
+   digitalWrite(PIN_NCS,HIGH);
+   // Write 0x5a to Power_Up_Reset register (0x3a)
+   Register_Write(0x3a, 0x5a);
+   delay(1);  // delay 1ms
+   // Read register 0x02 to 0x06
+   for (int i = 0; i < 5; i++)
+   {
+     Register_Read(0x02+i);
+    delayMicroseconds(TIME_us_TSRW_TSRR);
+   }
+   OpMode = LOW_LIGHT;          // Default to Low Light Mode (1)
+   Thresholds_DefaultReset();   // Thresholds default setting
+   OpMode_hysteresis1 = OpMode_hysteresis2 = OpMode_skipmotion_cnt = 0;  // clear all variables
+   Thresholds_DefaultReset();
+   // Init performance optimization registers
+   InitRegisters();
+}
+
+void Thresholds_DefaultReset()
+{
+  // Bright(0) to Low Light (1)
+  /* Index  0-0 */THRESH_OPMODE.thr.Bright_to_LowLight.rd_sum = 60;
+  /* Index  0-1 */THRESH_OPMODE.thr.Bright_to_LowLight.shutter = 8190;
+  /* Index  0-2 */THRESH_OPMODE.thr.Bright_to_LowLight.hysteresis = 10;
+  // Low Light (1) to Super Low Light (2)
+  /* Index  1-0 */THRESH_OPMODE.thr.LowLight_to_SuperLowLight.rd_sum = 90;
+  /* Index  1-1 */THRESH_OPMODE.thr.LowLight_to_SuperLowLight.shutter = 8190;
+  /* Index  1-0 */THRESH_OPMODE.thr.LowLight_to_SuperLowLight.hysteresis = 10;
+  // Low Light (1) to Bright (0)
+  /* Index  2-0 */THRESH_OPMODE.thr.LowLight_to_Bright.shutter = 3000;
+  /* Index  2-1 */THRESH_OPMODE.thr.LowLight_to_Bright.hysteresis = 10;
+  // Super Low Light (2) to Low Light (1)
+  /* Index  3-0 */THRESH_OPMODE.thr.SuperLowLight_to_LowLight.shutter = 1000;
+  /* Index  3-1 */THRESH_OPMODE.thr.SuperLowLight_to_LowLight.hysteresis = 10;
+
+  Thresh_OpModeSwitchHys = 10;
+}
+
+// Performance Optimization Registers initialization 
+void InitRegisters()
+{
+   switch(OpMode)
+   {
+     case 0: // Bright
+       InitRegisters_Mode_Bright();
+       break;
+     case 1: // Low Light
+       InitRegisters_Mode_LowLight();
+       break;
+     case 2: // Super Low Light
+       InitRegisters_Mode_SuperLowLight();
+       break;
+   }
+}
+
+// Mode 0 : Bright mode setting
+void InitRegisters_Mode_Bright()
+{
+   RegWrite_tsww(0x7F, 0x00);
+   RegWrite_tsww(0x55, 0x01);
+   RegWrite_tsww(0x50, 0x07);
+   RegWrite_tsww(0x7f, 0x0e);
+   RegWrite_tsww(0x43, 0x10);
+
+   RegWrite_tsww(0x48, 0x02);
+   RegWrite_tsww(0x7F, 0x00);
+   RegWrite_tsww(0x51, 0x7b);
+   RegWrite_tsww(0x50, 0x00);
+   RegWrite_tsww(0x55, 0x00);
+
+   RegWrite_tsww(0x7F, 0x00);
+   RegWrite_tsww(0x61, 0xAD);
+   RegWrite_tsww(0x7F, 0x03);
+   RegWrite_tsww(0x40, 0x00);
+   RegWrite_tsww(0x7F, 0x05);
+   RegWrite_tsww(0x41, 0xB3);
+   RegWrite_tsww(0x43, 0xF1);
+   RegWrite_tsww(0x45, 0x14);
+   RegWrite_tsww(0x5F, 0x34);
+   RegWrite_tsww(0x7B, 0x08);
+   RegWrite_tsww(0x5e, 0x34);
+   RegWrite_tsww(0x5b, 0x32);
+   RegWrite_tsww(0x6d, 0x32);
+   RegWrite_tsww(0x45, 0x17);
+   RegWrite_tsww(0x70, 0xe5);
+   RegWrite_tsww(0x71, 0xe5);
+   RegWrite_tsww(0x7F, 0x06);
+   RegWrite_tsww(0x44, 0x1B);
+   RegWrite_tsww(0x40, 0xBF);
+   RegWrite_tsww(0x4E, 0x3F);
+   RegWrite_tsww(0x7F, 0x08);
+   RegWrite_tsww(0x66, 0x44);
+   RegWrite_tsww(0x65, 0x20);
+   RegWrite_tsww(0x6a, 0x3a);
+   RegWrite_tsww(0x61, 0x05);
+   RegWrite_tsww(0x62, 0x05);
+   RegWrite_tsww(0x7F, 0x09);
+   RegWrite_tsww(0x4F, 0xAF);
+   RegWrite_tsww(0x48, 0x80);
+   RegWrite_tsww(0x49, 0x80);
+   RegWrite_tsww(0x57, 0x77);
+   RegWrite_tsww(0x5F, 0x40);
+   RegWrite_tsww(0x60, 0x78);
+   RegWrite_tsww(0x61, 0x78);
+   RegWrite_tsww(0x62, 0x08);
+   RegWrite_tsww(0x63, 0x50);
+   RegWrite_tsww(0x7F, 0x0A);
+   RegWrite_tsww(0x45, 0x60);
+   RegWrite_tsww(0x7F, 0x00);
+   RegWrite_tsww(0x4D, 0x11);
+   RegWrite_tsww(0x55, 0x80);
+   RegWrite_tsww(0x74, 0x21);
+   RegWrite_tsww(0x75, 0x1F);
+   RegWrite_tsww(0x4A, 0x78);
+   RegWrite_tsww(0x4B, 0x78);
+   RegWrite_tsww(0x44, 0x08);
+   RegWrite_tsww(0x45, 0x50);
+   RegWrite_tsww(0x64, 0xFE);
+   RegWrite_tsww(0x65, 0x1F);
+   RegWrite_tsww(0x72, 0x0A);
+   RegWrite_tsww(0x73, 0x00);
+   RegWrite_tsww(0x7F, 0x14);
+   RegWrite_tsww(0x44, 0x84);
+   RegWrite_tsww(0x65, 0x47);
+   RegWrite_tsww(0x66, 0x18);
+   RegWrite_tsww(0x63, 0x70);
+   RegWrite_tsww(0x6f, 0x2c);
+   RegWrite_tsww(0x7F, 0x15);
+   RegWrite_tsww(0x48, 0x48);
+   RegWrite_tsww(0x7F, 0x07);
+   RegWrite_tsww(0x41, 0x0D);
+   RegWrite_tsww(0x43, 0x14);
+   RegWrite_tsww(0x4B, 0x0E);
+   RegWrite_tsww(0x45, 0x0F);
+   RegWrite_tsww(0x44, 0x42);
+   RegWrite_tsww(0x4C, 0x80);
+   RegWrite_tsww(0x7F, 0x10);
+   RegWrite_tsww(0x5B, 0x03);
+   RegWrite_tsww(0x7F, 0x07);
+   RegWrite_tsww(0x40, 0x41);
+
+   delay(10); // delay 10ms
+
+   RegWrite_tsww(0x7F, 0x00);
+   RegWrite_tsww(0x32, 0x00);
+   RegWrite_tsww(0x7F, 0x07);
+   RegWrite_tsww(0x40, 0x40);
+   RegWrite_tsww(0x7F, 0x06);
+   RegWrite_tsww(0x68, 0x70);
+   RegWrite_tsww(0x69, 0x01);
+   RegWrite_tsww(0x7F, 0x0D);
+   RegWrite_tsww(0x48, 0xC0);
+   RegWrite_tsww(0x6F, 0xD5);
+   RegWrite_tsww(0x7F, 0x00);
+   RegWrite_tsww(0x5B, 0xA0);
+   RegWrite_tsww(0x4E, 0xA8);
+   RegWrite_tsww(0x5A, 0x50);
+   RegWrite_tsww(0x40, 0x80);
+   RegWrite_tsww(0x73, 0x1f);
+
+   delay(10); // delay 10ms
+
+   RegWrite_tsww(0x73, 0x00);
+}
+
+// Mode 1 : Low Light mode setting
+void InitRegisters_Mode_LowLight()
+{
+   RegWrite_tsww(0x7F, 0x00);
+   RegWrite_tsww(0x55, 0x01);
+   RegWrite_tsww(0x50, 0x07);
+   RegWrite_tsww(0x7f, 0x0e);
+   RegWrite_tsww(0x43, 0x10);
+
+   RegWrite_tsww(0x48, 0x02);
+   RegWrite_tsww(0x7F, 0x00);
+   RegWrite_tsww(0x51, 0x7b);
+   RegWrite_tsww(0x50, 0x00);
+   RegWrite_tsww(0x55, 0x00);
+  
+   RegWrite_tsww(0x7F, 0x00);
+   RegWrite_tsww(0x61, 0xAD);
+   RegWrite_tsww(0x7F, 0x03);
+   RegWrite_tsww(0x40, 0x00);
+   RegWrite_tsww(0x7F, 0x05);
+   RegWrite_tsww(0x41, 0xB3);
+   RegWrite_tsww(0x43, 0xF1);
+   RegWrite_tsww(0x45, 0x14);
+   RegWrite_tsww(0x5F, 0x34);
+   RegWrite_tsww(0x7B, 0x08);
+   RegWrite_tsww(0x5e, 0x34);
+   RegWrite_tsww(0x5b, 0x65);
+   RegWrite_tsww(0x6d, 0x65);
+   RegWrite_tsww(0x45, 0x17);
+   RegWrite_tsww(0x70, 0xe5);
+   RegWrite_tsww(0x71, 0xe5);
+   RegWrite_tsww(0x7F, 0x06);
+   RegWrite_tsww(0x44, 0x1B);
+   RegWrite_tsww(0x40, 0xBF);
+   RegWrite_tsww(0x4E, 0x3F);
+   RegWrite_tsww(0x7F, 0x08);
+   RegWrite_tsww(0x66, 0x44);
+   RegWrite_tsww(0x65, 0x20);
+   RegWrite_tsww(0x6a, 0x3a);
+   RegWrite_tsww(0x61, 0x05);
+   RegWrite_tsww(0x62, 0x05);
+   RegWrite_tsww(0x7F, 0x09);
+   RegWrite_tsww(0x4F, 0xAF);
+   RegWrite_tsww(0x48, 0x80);
+   RegWrite_tsww(0x49, 0x80);
+   RegWrite_tsww(0x57, 0x77);
+   RegWrite_tsww(0x5F, 0x40);
+   RegWrite_tsww(0x60, 0x78);
+   RegWrite_tsww(0x61, 0x78);
+   RegWrite_tsww(0x62, 0x08);
+   RegWrite_tsww(0x63, 0x50);
+   RegWrite_tsww(0x7F, 0x0A);
+   RegWrite_tsww(0x45, 0x60);
+   RegWrite_tsww(0x7F, 0x00);
+   RegWrite_tsww(0x4D, 0x11);
+   RegWrite_tsww(0x55, 0x80);
+   RegWrite_tsww(0x74, 0x21);
+   RegWrite_tsww(0x75, 0x1F);
+   RegWrite_tsww(0x4A, 0x78);
+   RegWrite_tsww(0x4B, 0x78);
+   RegWrite_tsww(0x44, 0x08);
+   RegWrite_tsww(0x45, 0x50);
+   RegWrite_tsww(0x64, 0xFE);
+   RegWrite_tsww(0x65, 0x1F);
+   RegWrite_tsww(0x72, 0x0A);
+   RegWrite_tsww(0x73, 0x00);
+   RegWrite_tsww(0x7F, 0x14);
+   RegWrite_tsww(0x44, 0x84);
+   RegWrite_tsww(0x65, 0x67);
+   RegWrite_tsww(0x66, 0x18);
+   RegWrite_tsww(0x63, 0x70);
+   RegWrite_tsww(0x6f, 0x2c);
+   RegWrite_tsww(0x7F, 0x15);
+   RegWrite_tsww(0x48, 0x48);
+   RegWrite_tsww(0x7F, 0x07);
+   RegWrite_tsww(0x41, 0x0D);
+   RegWrite_tsww(0x43, 0x14);
+   RegWrite_tsww(0x4B, 0x0E);
+   RegWrite_tsww(0x45, 0x0F);
+   RegWrite_tsww(0x44, 0x42);
+   RegWrite_tsww(0x4C, 0x80);
+   RegWrite_tsww(0x7F, 0x10);
+   RegWrite_tsww(0x5B, 0x03);
+   RegWrite_tsww(0x7F, 0x07);
+   RegWrite_tsww(0x40, 0x41);
+
+   delay(10); // delay 10ms
+
+   RegWrite_tsww(0x7F, 0x00);
+   RegWrite_tsww(0x32, 0x00);
+   RegWrite_tsww(0x7F, 0x07);
+   RegWrite_tsww(0x40, 0x40);
+   RegWrite_tsww(0x7F, 0x06);
+   RegWrite_tsww(0x68, 0x70);
+   RegWrite_tsww(0x69, 0x01);
+   RegWrite_tsww(0x7F, 0x0D);
+   RegWrite_tsww(0x48, 0xC0);
+   RegWrite_tsww(0x6F, 0xD5);
+   RegWrite_tsww(0x7F, 0x00);
+   RegWrite_tsww(0x5B, 0xA0);
+   RegWrite_tsww(0x4E, 0xA8);
+   RegWrite_tsww(0x5A, 0x50);
+   RegWrite_tsww(0x40, 0x80);
+   RegWrite_tsww(0x73, 0x1f);
+
+   delay(10); // delay 10ms
+
+   RegWrite_tsww(0x73, 0x00);
+}
+
+// Mode 2 : Super Low Light mode setting
+void InitRegisters_Mode_SuperLowLight()
+{
+   RegWrite_tsww(0x7F, 0x00);
+   RegWrite_tsww(0x55, 0x01);
+   RegWrite_tsww(0x50, 0x07);
+   RegWrite_tsww(0x7f, 0x0e);
+   RegWrite_tsww(0x43, 0x10);
+
+   RegWrite_tsww(0x48, 0x04);
+   RegWrite_tsww(0x7F, 0x00);
+   RegWrite_tsww(0x51, 0x7b);
+   RegWrite_tsww(0x50, 0x00);
+   RegWrite_tsww(0x55, 0x00);
+  
+   RegWrite_tsww(0x7F, 0x00);
+   RegWrite_tsww(0x61, 0xAD);
+   RegWrite_tsww(0x7F, 0x03);
+   RegWrite_tsww(0x40, 0x00);
+   RegWrite_tsww(0x7F, 0x05);
+   RegWrite_tsww(0x41, 0xB3);
+   RegWrite_tsww(0x43, 0xF1);
+   RegWrite_tsww(0x45, 0x14);
+   RegWrite_tsww(0x5F, 0x34);
+   RegWrite_tsww(0x7B, 0x08);
+   RegWrite_tsww(0x5E, 0x34);
+   RegWrite_tsww(0x5B, 0x32);
+   RegWrite_tsww(0x6D, 0x32);
+   RegWrite_tsww(0x45, 0x17);
+   RegWrite_tsww(0x70, 0xE5);
+   RegWrite_tsww(0x71, 0xE5);
+   RegWrite_tsww(0x7F, 0x06);
+   RegWrite_tsww(0x44, 0x1B);
+   RegWrite_tsww(0x40, 0xBF);
+   RegWrite_tsww(0x4E, 0x3F);
+   RegWrite_tsww(0x7F, 0x08);
+   RegWrite_tsww(0x66, 0x44);
+   RegWrite_tsww(0x65, 0x20);
+   RegWrite_tsww(0x6A, 0x3a);
+   RegWrite_tsww(0x61, 0x05);
+   RegWrite_tsww(0x62, 0x05);
+   RegWrite_tsww(0x7F, 0x09);
+   RegWrite_tsww(0x4F, 0xAF);
+   RegWrite_tsww(0x48, 0x80);
+   RegWrite_tsww(0x49, 0x80);
+   RegWrite_tsww(0x57, 0x77);
+   RegWrite_tsww(0x5F, 0x40);
+   RegWrite_tsww(0x60, 0x78);
+   RegWrite_tsww(0x61, 0x78);
+   RegWrite_tsww(0x62, 0x08);
+   RegWrite_tsww(0x63, 0x50);
+   RegWrite_tsww(0x7F, 0x0A);
+   RegWrite_tsww(0x45, 0x60);
+   RegWrite_tsww(0x7F, 0x00);
+   RegWrite_tsww(0x4D, 0x11);
+   RegWrite_tsww(0x55, 0x80);
+   RegWrite_tsww(0x74, 0x21);
+   RegWrite_tsww(0x75, 0x1F);
+   RegWrite_tsww(0x4A, 0x78);
+   RegWrite_tsww(0x4B, 0x78);
+   RegWrite_tsww(0x44, 0x08);
+   RegWrite_tsww(0x45, 0x50);
+   RegWrite_tsww(0x64, 0xCE);
+   RegWrite_tsww(0x65, 0x0B);
+   RegWrite_tsww(0x72, 0x0A);
+   RegWrite_tsww(0x73, 0x00);
+   RegWrite_tsww(0x7F, 0x14);
+   RegWrite_tsww(0x44, 0x84);
+   RegWrite_tsww(0x65, 0x67);
+   RegWrite_tsww(0x66, 0x18);
+   RegWrite_tsww(0x63, 0x70);
+   RegWrite_tsww(0x6f, 0x2c);
+   RegWrite_tsww(0x7F, 0x15);
+   RegWrite_tsww(0x48, 0x48);
+   RegWrite_tsww(0x7F, 0x07);
+   RegWrite_tsww(0x41, 0x0D);
+   RegWrite_tsww(0x43, 0x14);
+   RegWrite_tsww(0x4B, 0x0E);
+   RegWrite_tsww(0x45, 0x0F);
+   RegWrite_tsww(0x44, 0x42);
+   RegWrite_tsww(0x4C, 0x80);
+   RegWrite_tsww(0x7F, 0x10);
+   RegWrite_tsww(0x5B, 0x02);
+   RegWrite_tsww(0x7F, 0x07);
+   RegWrite_tsww(0x40, 0x41);
+
+   delay(25); // delay 25ms
+
+   RegWrite_tsww(0x7F, 0x00);
+   RegWrite_tsww(0x32, 0x44);
+   RegWrite_tsww(0x7F, 0x07);
+   RegWrite_tsww(0x40, 0x40);
+   RegWrite_tsww(0x7F, 0x06);
+   RegWrite_tsww(0x68, 0x40);
+   RegWrite_tsww(0x69, 0x02);
+   RegWrite_tsww(0x7F, 0x0D);
+   RegWrite_tsww(0x48, 0xC0);
+   RegWrite_tsww(0x6F, 0xD5);
+   RegWrite_tsww(0x7F, 0x00);
+   RegWrite_tsww(0x5B, 0xA0);
+   RegWrite_tsww(0x4E, 0xA8);
+   RegWrite_tsww(0x5A, 0x50);
+   RegWrite_tsww(0x40, 0x80);
+   RegWrite_tsww(0x73, 0x0B);
+
+   delay(25); // delay 25ms
+
+   RegWrite_tsww(0x73, 0x00);
+}
+
+// Function that perform register write and wait for Tsww microseconds
+void RegWrite_tsww(unsigned char address, unsigned char value)
+{
+   Register_Write(address, value);  // Write register function
+   delayMicroseconds(TIME_us_TSWW);
+}
+
+// Function that perform register read and wait for Tsrw/Tsrr microseconds
+unsigned char RegRead_tsrw_tsrr(unsigned char address)
+{
+   unsigned char v = Register_Read(address);
+   delayMicroseconds(TIME_us_TSRW_TSRR);
+   return v;
+}
+
+// Register write function
+void Register_Write(unsigned char address, unsigned value)
+{
+  digitalWrite(PIN_NCS,LOW);
+  delayMicroseconds(TIME_us_TNCS_SCLK);
+  
+  //  send in the address and value via SPI:
+  SPI.transfer(address | 0x80);
+  delayMicroseconds(10);
+  SPI.transfer(value);
+  delayMicroseconds(TIME_us_TSCLK_NCS_W);
+
+  digitalWrite(PIN_NCS,HIGH); 
+}
+
+// Register Read function
+unsigned int Register_Read  (unsigned char address)
+{
+  byte inByte = 0;                              // incoming byte from the SPI
+  unsigned int result = 0;                      // result to return
+
+  digitalWrite(PIN_NCS,LOW);
+  delayMicroseconds(TIME_us_TNCS_SCLK);
+  
+  //  send in the address via SPI:
+  SPI.transfer(address & 0x7f);
+  delayMicroseconds(TIME_us_TSRAD);
+ 
+  inByte = SPI.transfer(0x00);                 // byte to read:
+
+  delayMicroseconds(TIME_us_TSCLK_NCS_R);
+  digitalWrite(PIN_NCS,HIGH);
+  result = inByte;   
+  return(result);   
+}
+
+// To read a motion report
+void ReadMotion()
+{
+   int i = 0, j;
+   unsigned char f;
+   
+   // Lower NCS and wait for Tncs-sclk
+   digitalWrite(PIN_NCS,LOW);
+   delayMicroseconds(TIME_us_TNCS_SCLK);
+
+   // Transfer the motion burst address
+   SPI.transfer(0x16);
+   // Held the MOSI high
+   digitalWrite(PIN_SPI_MOSI,HIGH);
+   // Delay Tsrad
+   delayMicroseconds(TIME_us_TSRAD);
+
+   // Read up to 10 bytes to get all motion data
+   for (i = 0; i < MOTION_BURST_SIZE; i++)
+   {
+     MotionData.d[i] = SPI.transfer(0x00);
+   }
+   // Lower MOSI line
+   digitalWrite(PIN_SPI_MOSI,LOW);
+   // Raise NCS and hold for Tbexit
+   digitalWrite(PIN_NCS,HIGH);
+   delayMicroseconds(TIME_us_TBEXIT);
+   
+   // As Arduino is little-endian, we need to swap the shutter bytes, but we dont need to swap the delta xy bytes
+   SwapBytes(&(MotionData.burst.shutter.c[0]),&(MotionData.burst.shutter.c[1]));
+   // If your system is big endian, then you need to uncomment this, and comment the above
+   //SwapBytes(&(MotionData.burst.deltaX.c[0]),&(MotionData.burst.deltaX.c[1]));
+   //SwapBytes(&(MotionData.burst.deltaY.c[0]),&(MotionData.burst.deltaY.c[1]));
+   
+    // Check for jitter suppression
+    if (OpMode == BRIGHT)
+    {
+      i = 25;
+      j = 0x1ff0;
+    }
+    else if (OpMode == LOW_LIGHT)
+    {
+      i = 70;
+      j = 0x1ff0;
+    }
+    else  // SUPER_LOW_LIGHT
+    {
+      i = 85;
+      j = 0x0bc0;
+    }
+
+    if (OpMode_skipmotion_cnt > 0)
+    {
+      MotionData.burst.deltaX.si = MotionData.burst.deltaY.si = 0;
+      OpMode_skipmotion_cnt--;
+    }
+    else if (bEnableJitterSuppression)
+    {      // Squal less than i        and    Shutter >= j
+      if ((MotionData.burst.squal < i) && (MotionData.burst.shutter.i >= j))
+      {
+        MotionData.burst.deltaX.si = MotionData.burst.deltaY.si = 0;
+      }
+    }
+   
+    // Check for whether to change operation mode
+    OperationModeSwitch();
+
+   // Use the motion output for your usage
+   // MotionData.burst.deltaX.si
+   // MotionData.burst.deltaY.si
+}
+
+void OperationModeSwitch()
+{
+  int next_OpMode = OpMode + 1;
+  int prev_OpMode = (int)OpMode - 1;
+
+  // Check for whether can step UP or not, either LowLight to Bright or SuperLowLight to LowLight
+  if (prev_OpMode >= BRIGHT)
+  {
+    if (MotionData.burst.shutter.i <= THRESH_OPMODE.thrs.opmode_stepup[prev_OpMode].shutter)
+    {
+      OpMode_hysteresis1++;
+      if (OpMode_hysteresis1 >= THRESH_OPMODE.thrs.opmode_stepup[prev_OpMode].hysteresis)
+        SetBrightnessMode(prev_OpMode);
+    }
+    else
+      OpMode_hysteresis1 = 0;
+  }
+
+  // Check for whether can step DOWN or not, either LowLight to SuperLowLight or Bright to LowLight
+  if (next_OpMode <= SUPER_LOW_LIGHT)
+  {
+    if (MotionData.burst.rd_sum <= THRESH_OPMODE.thrs.opmode_stepdown[OpMode].rd_sum && (MotionData.burst.shutter.i >= THRESH_OPMODE.thrs.opmode_stepdown[OpMode].shutter))
+    {
+      OpMode_hysteresis2++;
+      if (OpMode_hysteresis2 >= THRESH_OPMODE.thrs.opmode_stepdown[OpMode].hysteresis)
+        SetBrightnessMode(next_OpMode);
+    }
+    else
+      OpMode_hysteresis2 = 0;
+  }
+
+}
+
+void SetBrightnessMode(unsigned char mode)
+{
+  if (mode == OpMode)
+    return;
+    
+  OpMode = mode;
+  RegWrite_tsww(0x3a, 0x5a);   // issue soft reset first
+  InitRegisters();
+
+  OpMode_hysteresis1 = 0;
+  OpMode_hysteresis2 = 0;
+  OpMode_skipmotion_cnt = Thresh_OpModeSwitchSkipMotion;      // Skip the next few motion report
+}
+
+void SwapBytes(unsigned char *c1, unsigned char *c2)
+{
+  char c = *c2;
+  *c2 = *c1;
+  *c1 = c;
+}
