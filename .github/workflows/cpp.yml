@@ -1,0 +1,32 @@
+name: C/C++ CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+
+    runs-on: self-hosted
+
+    steps:
+    - uses: actions/checkout@v2
+      with: 
+        token: ${{ secrets.ACCESS_TOKEN }}
+        submodules: recursive
+    - name: comp
+      run: mkdir Tools && mkdir Tools/completion && cd Tools/completion && wget https://github.com/ArduPilot/ardupilot/raw/master/Tools/completion/completion.bash
+    - name: stup
+      run: mkdir Tools/environment_install && cd Tools && cd environment_install && wget https://github.com/ArduPilot/ardupilot/raw/d7018a2ba0565c303ce133a0088ccd8d1ac85e3c/Tools/environment_install/install-prereqs-ubuntu.sh && bash ./install-prereqs-ubuntu.sh -y
+      env:
+        USER: github
+    - name: deploy
+      run: source ~/.profile && chmod 777 ./deploy.sh && ./deploy.sh
+    - name: Upload a Build Artifact
+      uses: actions/upload-artifact@v2.1.4
+      with:
+        # Artifact name
+        name: firmwares
+        # A file, directory or wildcard pattern that describes what to upload
+        path: deploy
