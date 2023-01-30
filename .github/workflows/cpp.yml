@@ -15,7 +15,7 @@ jobs:
       with: 
         submodules: recursive
     - name: apt-get
-      run: apt-get update
+      run: sudo apt-get update
     - name: comp
       run: mkdir Tools && mkdir Tools/completion && cd Tools/completion && wget https://github.com/ArduPilot/ardupilot/raw/master/Tools/completion/completion.bash
     - name: stup
