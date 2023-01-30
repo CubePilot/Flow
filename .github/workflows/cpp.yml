@@ -18,8 +18,6 @@ jobs:
       run: mkdir Tools && mkdir Tools/completion && cd Tools/completion && wget https://github.com/ArduPilot/ardupilot/raw/master/Tools/completion/completion.bash
     - name: stup
       run: mkdir Tools/environment_install && cd Tools && cd environment_install && wget https://github.com/ArduPilot/ardupilot/raw/d7018a2ba0565c303ce133a0088ccd8d1ac85e3c/Tools/environment_install/install-prereqs-ubuntu.sh && bash ./install-prereqs-ubuntu.sh -y
-      env:
-        USER: github
     - name: deploy
       run: source ~/.profile && chmod 777 ./deploy.sh && ./deploy.sh
     - name: Upload a Build Artifact
