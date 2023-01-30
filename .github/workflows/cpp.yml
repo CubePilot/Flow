@@ -8,24 +8,41 @@ on:
 jobs:
   build:
 
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-latest
 
     steps:
     - uses: actions/checkout@v2
       with: 
         submodules: recursive
-    - name: apt-get
-      run: sudo apt-get update
     - name: comp
       run: |
-        mkdir Tools && mkdir Tools/completion && cd Tools/completion && \
-        wget https://github.com/ArduPilot/ardupilot/raw/master/Tools/completion/completion.bash && mkdir bash && \
-        cd bash && wget https://github.com/ArduPilot/ardupilot/raw/master/Tools/completion/bash/_waf && \
-        wget https://github.com/ArduPilot/ardupilot/raw/master/Tools/completion/bash/_sim_vehicle && \
-        wget https://github.com/ArduPilot/ardupilot/raw/master/Tools/completion/bash/_ap_autotest && \
-        wget https://github.com/ArduPilot/ardupilot/raw/master/Tools/completion/bash/_ap_bin
+        set -e -x
+        sudo apt-get update
+        sudo apt install python2
+        curl https://bootstrap.pypa.io/pip/2.7/get-pip.py --output get-pip.py
+        sudo python2 get-pip.py
+        mkdir Tools && mkdir Tools/completion && cd Tools/completion && wget https://github.com/ArduPilot/ardupilot/raw/master/Tools/completion/completion.bash
+        OPT="/opt"
+        cd $OPT
+        echo "Installing toolchain for STM32 Boards"
+        echo "Downloading from ArduPilot server"
+        sudo wget --progress=dot:giga https://firmware.ardupilot.org/Tools/STM32-tools/gcc-arm-none-eabi-6-2017-q2-update-linux.tar.bz2
+        echo "Installing..."
+        sudo chmod -R 777 gcc-arm-none-eabi-6-2017-q2-update-linux.tar.bz2
+        sudo tar xjf gcc-arm-none-eabi-6-2017-q2-update-linux.tar.bz2
+        echo "... Cleaning"
+        sudo rm gcc-arm-none-eabi-6-2017-q2-update-linux.tar.bz2
+        SHELL_LOGIN=".profile"
+        exportline="export PATH=$OPT/$ARM_ROOT/bin:\$PATH";
+        echo $exportline >> ~/$SHELL_LOGIN
+      env:
+        ARM_ROOT: gcc-arm-none-eabi-6-2017-q2-update
     - name: stup
       run: mkdir Tools/environment_install && cd Tools && cd environment_install && wget https://github.com/ArduPilot/ardupilot/raw/master/Tools/environment_install/install-prereqs-ubuntu.sh && bash ./install-prereqs-ubuntu.sh -y
+      env:
+        SKIP_AP_COMPLETION_ENV: 1
+        DO_AP_STM_ENV: 0
+        ARM_ROOT: gcc-arm-none-eabi-6-2017-q2-update
     - name: deploy
       run: source ~/.profile && chmod 777 ./deploy.sh && ./deploy.sh
     - name: Upload a Build Artifact
@@ -35,3 +52,4 @@ jobs:
         name: firmwares
         # A file, directory or wildcard pattern that describes what to upload
         path: deploy
+        
