@@ -8,12 +8,11 @@ on:
 jobs:
   build:
 
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
 
     steps:
     - uses: actions/checkout@v2
       with: 
-        token: ${{ secrets.ACCESS_TOKEN }}
         submodules: recursive
     - name: comp
       run: mkdir Tools && mkdir Tools/completion && cd Tools/completion && wget https://github.com/ArduPilot/ardupilot/raw/master/Tools/completion/completion.bash
