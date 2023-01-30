@@ -17,7 +17,7 @@ jobs:
     - name: apt-get
       run: sudo apt-get update
     - name: comp
-      run: mkdir Tools && mkdir Tools/completion && cd Tools/completion && wget https://github.com/ArduPilot/ardupilot/raw/master/Tools/completion/completion.bash
+      run: mkdir Tools && mkdir Tools/completion && cd Tools/completion && wget https://github.com/ArduPilot/ardupilot/raw/master/Tools/completion/completion.bash && mkdir bash && cd bash && wget https://github.com/ArduPilot/ardupilot/raw/master/Tools/completion/bash/_waf
     - name: stup
       run: mkdir Tools/environment_install && cd Tools && cd environment_install && wget https://github.com/ArduPilot/ardupilot/raw/master/Tools/environment_install/install-prereqs-ubuntu.sh && bash ./install-prereqs-ubuntu.sh -y
     - name: deploy
